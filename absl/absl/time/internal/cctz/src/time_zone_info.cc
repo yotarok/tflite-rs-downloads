@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//   https://www.apache.org/licenses/LICENSE-2.0
 //
 //   Unless required by applicable law or agreed to in writing, software
 //   distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,7 +25,7 @@
 // a grain of salt.
 //
 // For more information see tzfile(5), http://www.iana.org/time-zones, or
-// http://en.wikipedia.org/wiki/Zoneinfo.
+// https://en.wikipedia.org/wiki/Zoneinfo.
 //
 // Note that we assume the proleptic Gregorian calendar and 60-second
 // minutes throughout.
@@ -682,7 +682,6 @@ std::unique_ptr<ZoneInfoSource> AndroidZoneInfoSource::Open(
   // Use of the "file:" prefix is intended for testing purposes only.
   if (name.compare(0, 5, "file:") == 0) return Open(name.substr(5));
 
-#if defined(__ANDROID__)
   // See Android's libc/tzcode/bionic.cpp for additional information.
   for (const char* tzdata : {"/data/misc/zoneinfo/current/tzdata",
                              "/system/usr/share/zoneinfo/tzdata"}) {
@@ -717,7 +716,7 @@ std::unique_ptr<ZoneInfoSource> AndroidZoneInfoSource::Open(
       }
     }
   }
-#endif  // __ANDROID__
+
   return nullptr;
 }
 
@@ -921,7 +920,7 @@ bool TimeZoneInfo::NextTransition(const time_point<seconds>& tp,
     ++begin;
   }
   std::int_fast64_t unix_time = ToUnixSeconds(tp);
-  const Transition target = { unix_time };
+  const Transition target = {unix_time, 0, civil_second(), civil_second()};
   const Transition* tr = std::upper_bound(begin, end, target,
                                           Transition::ByUnixTime());
   for (; tr != end; ++tr) {  // skip no-op transitions
@@ -956,7 +955,7 @@ bool TimeZoneInfo::PrevTransition(const time_point<seconds>& tp,
     }
     unix_time += 1;  // ceils
   }
-  const Transition target = { unix_time };
+  const Transition target = {unix_time, 0, civil_second(), civil_second()};
   const Transition* tr = std::lower_bound(begin, end, target,
                                           Transition::ByUnixTime());
   for (; tr != begin; --tr) {  // skip no-op transitions
