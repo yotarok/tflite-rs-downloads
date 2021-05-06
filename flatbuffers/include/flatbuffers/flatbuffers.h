@@ -2410,7 +2410,11 @@ inline uoffset_t GetPrefixedSize(const uint8_t* buf){ return ReadScalar<uoffset_
 // Base class for native objects (FlatBuffer data de-serialized into native
 // C++ data structures).
 // Contains no functionality, purely documentative.
+#ifdef FLATBUFFERS_POLYMORPHIC_NATIVETABLE
 struct NativeTable { virtual ~NativeTable() {} };
+#else
+struct NativeTable {};
+#endif
 
 /// @brief Function types to be used with resolving hashes into objects and
 /// back again. The resolver gets a pointer to a field inside an object API
