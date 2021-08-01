@@ -531,7 +531,7 @@ EigenContractionKernel(const LhsMapper lhs, const RhsMapper rhs,
 template<typename Index, typename LhsMapper,
          typename RhsMapper, typename OutputMapper, bool CHECK_LHS_BOUNDARY,
          bool CHECK_RHS_BOUNDARY>
-__device__ EIGEN_STRONG_INLINE void
+__device__ __forceinline__ void
 EigenFloatContractionKernelInternal16x16(const LhsMapper lhs, const RhsMapper rhs,
                        const OutputMapper output, float2 lhs_shmem2[][16],
                        float2 rhs_shmem2[][8], const Index m_size,
@@ -771,7 +771,7 @@ EigenFloatContractionKernelInternal16x16(const LhsMapper lhs, const RhsMapper rh
 template<typename Index, typename LhsMapper,
          typename RhsMapper, typename OutputMapper, bool CHECK_LHS_BOUNDARY,
          bool CHECK_RHS_BOUNDARY>
-__device__ EIGEN_STRONG_INLINE void
+__device__ __forceinline__ void
 EigenFloatContractionKernelInternal(const LhsMapper lhs, const RhsMapper rhs,
                        const OutputMapper output, float2 lhs_shmem2[][32],
                        float2 rhs_shmem2[][8], const Index m_size,
@@ -1270,7 +1270,7 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
   typedef typename LeftEvaluator::Dimensions LeftDimensions;
   typedef typename RightEvaluator::Dimensions RightDimensions;
 
-  EIGEN_DEVICE_FUNC TensorEvaluator(const XprType& op, const Device& device) :
+  TensorEvaluator(const XprType& op, const Device& device) :
       Base(op, device)
   {
     EIGEN_STATIC_ASSERT( (internal::is_same<OutputKernelType, const NoOpOutputKernel>::value),
@@ -1278,7 +1278,7 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
   }
 
   // We need to redefine this method to make nvcc happy
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(Scalar* data) {
+  EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(Scalar* data) {
     this->m_leftImpl.evalSubExprsIfNeeded(NULL);
     this->m_rightImpl.evalSubExprsIfNeeded(NULL);
     if (data) {

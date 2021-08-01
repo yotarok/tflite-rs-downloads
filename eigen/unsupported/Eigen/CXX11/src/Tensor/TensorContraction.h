@@ -180,6 +180,10 @@ template <typename ResScalar, typename LhsScalar, typename RhsScalar,
     typename StorageIndex, typename OutputMapper, typename LhsMapper,
     typename RhsMapper>
 struct TensorContractionKernel {
+  // True if `invoke()` supports `beta` in `C <- alpha * A * B + beta * C`
+  // (otherwise beta should be always equal to 1).
+  enum { HasBeta = false };
+
   EIGEN_DEVICE_FUNC
   TensorContractionKernel(StorageIndex m_, StorageIndex k_, StorageIndex n_,
                           StorageIndex bm_, StorageIndex bk_, StorageIndex bn_)
@@ -248,7 +252,9 @@ struct TensorContractionKernel {
       const OutputMapper& output_mapper, const LhsBlock& lhsBlock,
       const RhsBlock& rhsBlock, const StorageIndex rows,
       const StorageIndex depth, const StorageIndex cols,
-      const ResScalar alpha) {
+      const ResScalar alpha, const ResScalar beta) {
+    // Default GEBP kernel does not support beta.
+    eigen_assert(beta == ResScalar(1));
     static const int kComputeStrideFromBlockDimensions = -1;
     GebpKernel()(output_mapper, lhsBlock, rhsBlock, rows, depth, cols, alpha,
         /*strideA*/ kComputeStrideFromBlockDimensions,
@@ -356,7 +362,7 @@ class TensorContractionOp : public TensorBase<TensorContractionOp<Indices, LhsXp
 
 
 template<typename Derived>
-struct TensorContractionEvaluatorBase
+struct TensorContractionEvaluatorBase : internal::no_assignment_operator
 {
   typedef typename internal::traits<Derived>::Indices Indices;
   typedef typename internal::traits<Derived>::LeftArgType LeftArgType;
@@ -381,6 +387,10 @@ struct TensorContractionEvaluatorBase
     CoordAccess       = false,  // to be implemented
     RawAccess         = true
   };
+
+  //===- Tensor block evaluation strategy (see TensorBlock.h) -------------===//
+  typedef internal::TensorBlockNotImplemented TensorBlock;
+  //===--------------------------------------------------------------------===//
 
   // Most of the code is assuming that both input tensors are ColMajor. If the
   // inputs are RowMajor, we will "cheat" by swapping the LHS and RHS:
@@ -407,7 +417,7 @@ struct TensorContractionEvaluatorBase
 
   typedef DSizes<Index, NumDims> Dimensions;
 
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE
+  EIGEN_STRONG_INLINE
   TensorContractionEvaluatorBase(const XprType& op, const Device& device)
       : m_leftImpl(choose(Cond<static_cast<int>(Layout) == static_cast<int>(ColMajor)>(),
                           op.lhsExpression(), op.rhsExpression()), device),
@@ -592,7 +602,7 @@ struct TensorContractionEvaluatorBase
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Dimensions& dimensions() const { return m_dimensions; }
 
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(EvaluatorPointerType data) {
+  EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(EvaluatorPointerType data) {
     m_leftImpl.evalSubExprsIfNeeded(NULL);
     m_rightImpl.evalSubExprsIfNeeded(NULL);
     if (data) {
@@ -607,7 +617,7 @@ struct TensorContractionEvaluatorBase
 
 #ifdef EIGEN_USE_THREADS
   template <typename EvalSubExprsCallback>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void evalSubExprsIfNeededAsync(
+  EIGEN_STRONG_INLINE void evalSubExprsIfNeededAsync(
       EvaluatorPointerType dest, EvalSubExprsCallback done) {
     m_leftImpl.evalSubExprsIfNeededAsync(nullptr, [this, done, dest](bool) {
       m_rightImpl.evalSubExprsIfNeededAsync(nullptr, [this, done, dest](bool) {
@@ -623,6 +633,7 @@ struct TensorContractionEvaluatorBase
   }
 #endif  // EIGEN_USE_THREADS
 
+#ifndef TENSOR_CONTRACTION_DISPATCH
 #define TENSOR_CONTRACTION_DISPATCH(METHOD, ALIGNMENT, ARGS) \
   if (this->m_lhs_inner_dim_contiguous) {                    \
     if (this->m_rhs_inner_dim_contiguous) {                  \
@@ -653,7 +664,9 @@ struct TensorContractionEvaluatorBase
       }                                                      \
     }                                                        \
   }
+#endif
 
+#ifndef TENSOR_CONTRACTION_ASYNC_DISPATCH
 #define TENSOR_CONTRACTION_ASYNC_DISPATCH(METHOD, DONE, ALIGNMENT, ARGS, FN) \
   if (this->m_lhs_inner_dim_contiguous) {                                    \
     if (this->m_rhs_inner_dim_contiguous) {                                  \
@@ -684,6 +697,7 @@ struct TensorContractionEvaluatorBase
       }                                                                      \
     }                                                                        \
   }
+#endif
 
   EIGEN_DEVICE_FUNC void evalTo(Scalar* buffer) const {
    static_cast<const Derived*>(this)->template evalProduct<Unaligned>(buffer);
@@ -767,15 +781,6 @@ struct TensorContractionEvaluatorBase
   void evalGemm(Scalar* buffer) const {
     // columns in left side, rows in right side
     const Index k = this->m_k_size;
-
-    // rows in left side
-    const Index m = this->m_i_size;
-
-    // columns in right side
-    const Index n = this->m_j_size;
-
-    // zero out the result buffer (which must be of size at least m * n * sizeof(Scalar)
-    this->m_device.memset(buffer, 0, m * n * sizeof(Scalar));
     this->template evalGemmPartial<lhs_inner_dim_contiguous,
                                    rhs_inner_dim_contiguous,
                                    rhs_inner_dim_reordered,
@@ -861,6 +866,12 @@ struct TensorContractionEvaluatorBase
     const BlockMemHandle packed_mem =
         kernel.allocate(this->m_device, &blockA, &blockB);
 
+    // If a contraction kernel does not support beta, explicitly initialize
+    // output buffer with zeroes.
+    if (!TensorContractionKernel::HasBeta) {
+      this->m_device.memset(buffer, 0, m * n * sizeof(Scalar));
+    }
+
     for(Index i2=0; i2<m; i2+=mc)
     {
       const Index actual_mc = numext::mini(i2+mc,m)-i2;
@@ -868,6 +879,13 @@ struct TensorContractionEvaluatorBase
         // make sure we don't overshoot right edge of left matrix, then pack vertical panel
         const Index actual_kc = numext::mini(k2 + kc, k_end) - k2;
         kernel.packLhs(&blockA, lhs.getSubMapper(i2, k2), actual_kc, actual_mc);
+
+        // If kernel supports beta, there is no need to initialize output
+        // buffer with zeroes.
+        const Scalar alpha = Scalar(1);
+        const Scalar beta = (TensorContractionKernel::HasBeta && k2 == k_start)
+                                ? Scalar(0)
+                                : Scalar(1);
 
         // series of horizontal blocks
         for (Index j2 = 0; j2 < n; j2 += nc) {
@@ -880,7 +898,7 @@ struct TensorContractionEvaluatorBase
           // The parameters here are copied from Eigen's GEMM implementation
           const OutputMapper output_mapper = output.getSubMapper(i2, j2);
           kernel.invoke(output_mapper, blockA, blockB, actual_mc, actual_kc,
-                        actual_nc, Scalar(1));
+                        actual_nc, alpha, beta);
 
           // We are done with this [i2, j2] output block.
           if (use_output_kernel && k2 + kc >= k_end) {
@@ -894,7 +912,7 @@ struct TensorContractionEvaluatorBase
     kernel.deallocate(this->m_device, packed_mem);
   }
 
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void cleanup() {
+  EIGEN_STRONG_INLINE void cleanup() {
     m_leftImpl.cleanup();
     m_rightImpl.cleanup();
 
@@ -920,8 +938,6 @@ struct TensorContractionEvaluatorBase
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE EvaluatorPointerType data() const { return m_result; }
 
 protected:
-  // Prevent assignment
-  TensorContractionEvaluatorBase& operator = (const TensorContractionEvaluatorBase&);
   Dimensions m_dimensions;
 
   contract_t m_k_strides;
@@ -993,7 +1009,7 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
   // Could we use NumDimensions here?
   typedef DSizes<Index, NumDims> Dimensions;
 
-  EIGEN_DEVICE_FUNC TensorEvaluator(const XprType& op, const Device& device) :
+  TensorEvaluator(const XprType& op, const Device& device) :
       Base(op, device) { }
 
   template <int Alignment>

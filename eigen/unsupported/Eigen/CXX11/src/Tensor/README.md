@@ -83,7 +83,7 @@ large enough to hold all the data.
 
     // You can also map fixed-size tensors.  Here we get a 1d view of
     // the 2d fixed-size tensor.
-    TensorFixedSize<float, Sizes<4, 5>> t_4x3;
+    TensorFixedSize<float, Sizes<4, 3>> t_4x3;
     TensorMap<Tensor<float, 1>> t_12(t_4x3.data(), 12);
 
 
@@ -1468,9 +1468,9 @@ the input tensor.
     Eigen::Tensor<int, 2> a(4, 3);
     a.setValues({{0, 100, 200}, {300, 400, 500},
                  {600, 700, 800}, {900, 1000, 1100}});
-    Eigen::array<int, 2> offsets = {1, 0};
-    Eigen::array<int, 2> extents = {2, 2};
-    Eigen::Tensor<int, 1> slice = a.slice(offsets, extents);
+    Eigen::array<Eigen::Index, 2> offsets = {1, 0};
+    Eigen::array<Eigen::Index, 2> extents = {2, 2};
+    Eigen::Tensor<int, 2> slice = a.slice(offsets, extents);
     cout << "a" << endl << a << endl;
     =>
     a
