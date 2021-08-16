@@ -24,6 +24,7 @@
 #include "kernel.h"
 
 #include <string.h>
+#undef NDEBUG
 #include <cassert>
 
 namespace gemmlowp {
